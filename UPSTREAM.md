@@ -11,11 +11,13 @@ Reading List Playlist is currently based on Grant Drake's Reading List plugin:
 
 Local derivative version:
 
-- Reading List Playlist: `1.15.8`
+- Reading List Playlist: `1.15.9`
 
 Derivative-only additions:
 
 - Plugin rename/package rename to `reading_list_playlist`.
 - Genre Tag Browser flat-view handling via `tag_browser_dont_collapse`.
 - `Keep Genre view flat` menu action.
+- Playlist / Genre menu for last-used playlist, selected-book playlist membership,
+  Genre assignment, and Genre-to-playlist creation.
 - Repo documentation, packaging script, screenshot, notice, and roadmap.

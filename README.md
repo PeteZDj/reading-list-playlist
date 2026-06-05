@@ -21,6 +21,9 @@ flat list view.
 - Automatically keep a custom Genre category, usually `#genre`, out of calibre's
   Tag Browser partitioning.
 - Provide a manual menu action: `Keep Genre view flat`.
+- Use the `Playlist / Genre` menu to add selected books to the last playlist,
+  see which playlists they are already on, add a Genre, or turn selected Genre
+  values into syncable Reading List playlists.
 
 ## Genre Flat-View Fix
 

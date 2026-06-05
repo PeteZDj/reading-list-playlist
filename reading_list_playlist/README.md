@@ -16,6 +16,8 @@ This derivative adds a small Genre Tag Browser fix:
   adding the Genre category key, usually `#genre`, to calibre's
   `tag_browser_dont_collapse` preference.
 - The plugin also exposes a manual `Keep Genre view flat` menu action.
+- The `Playlist / Genre` menu adds quick playlist awareness, last-playlist
+  adding, Genre assignment, and Genre-to-playlist creation.
 
 ## Credits
 

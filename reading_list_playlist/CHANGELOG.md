@@ -1,5 +1,14 @@
 # Reading List Change Log
 
+## [1.15.9-playlist] - 2026-06-05
+### Added
+- Added a `Playlist / Genre` menu for selected books.
+- Added one-click `Add to last playlist` behavior.
+- Added selected-book playlist membership visibility with quick view/remove actions.
+- Added `Add selected books to Genre...`.
+- Added `Create/update playlists from selected Genres`, creating auto-search lists
+  such as `Genre - Comics` that can use the existing sync configuration.
+
 ## [1.15.8-playlist] - 2026-06-05
 ### Added
 - Derivative build credited to Pete Njagi / PeteZDj.

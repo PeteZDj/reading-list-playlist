@@ -100,6 +100,7 @@ DEFAULT_SCHEMA_VERSION = 1.65
 
 STORE_OPTIONS = 'Options'
 KEY_REMOVE_DIALOG = 'removeDialog'
+KEY_LAST_PLAYLIST = 'lastPlaylist'
 
 STORE_DEVICES = 'Devices'
 # Devices store consists of:
@@ -138,6 +139,7 @@ DEFAULT_LIBRARY_VALUES = {
 DEFAULT_LIST_OPTIONS = { 
                         KEY_REMOVE_DIALOG: True,
                         KEY_QUICK_ACCESS: False,
+                        KEY_LAST_PLAYLIST: '',
                        }
 
 # This is where all preferences for this plugin will be stored
@@ -1294,7 +1296,7 @@ class ConfigWidget(QWidget):
         library_config[KEY_QUICK_ACCESS_LIST] = quick_list_name
         set_library_config(self.plugin_action.gui.current_db, library_config)
 
-        options = {}
+        options = dict(plugin_prefs[STORE_OPTIONS])
         options[KEY_REMOVE_DIALOG] = self.other_tab.delete_confirmation_checkbox.checkState() == Qt.Checked
         options[KEY_QUICK_ACCESS] = self.other_tab.quick_access_checkbox.checkState() == Qt.Checked
         plugin_prefs[STORE_OPTIONS] = options

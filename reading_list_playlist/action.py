@@ -3,7 +3,7 @@ from __future__ import unicode_literals, division, absolute_import, print_functi
 __license__ = 'GPL v3'
 __copyright__ = '2011, Grant Drake; 2026, Pete Njagi'
 
-import threading, re
+import copy, threading, re
 from collections import OrderedDict
 from functools import partial
 
@@ -11,9 +11,9 @@ import six
 from six import text_type as unicode
 
 try:
-    from qt.core import QMenu, QToolButton, pyqtSignal
+    from qt.core import QInputDialog, QMenu, QToolButton, pyqtSignal
 except ImportError:
-    from PyQt5.Qt import QMenu, QToolButton, pyqtSignal
+    from PyQt5.Qt import QInputDialog, QMenu, QToolButton, pyqtSignal
 
 try:
     load_translations()
@@ -148,6 +148,9 @@ class ReadingListAction(InterfaceAction):
             list_names = cfg.get_list_names(db, exclude_auto=True)
             all_list_names = cfg.get_list_names(db, exclude_auto=False)
             auto_list_names = list(set(all_list_names) - set(list_names))
+            selected_ids = self._selected_book_ids()
+            selected_lists = self._lists_for_book_ids(db, selected_ids)
+            last_list_name = cfg.plugin_prefs[cfg.STORE_OPTIONS].get(cfg.KEY_LAST_PLAYLIST, '')
 
             default_list_name = library[cfg.KEY_DEFAULT_LIST]
             default_list = library[cfg.KEY_LISTS][default_list_name]
@@ -209,6 +212,46 @@ class ReadingListAction(InterfaceAction):
                                                           unique_name='Add series to all lists',
                                                           image='plusplus.png',
                                                           triggered=self._add_selected_series_to_all_lists)
+
+            m.addSeparator()
+
+            if selected_ids:
+                smart_menu = m.addMenu(get_icon('images/plusminus.png'), _('Playlist / Genre'))
+                smart_menu.setStatusTip(_('Quick playlist and Genre actions for selected books'))
+                smart_menu_action = smart_menu.menuAction()
+                smart_menu_action.favourites_menu_unique_name = _('Playlist / Genre')
+                smart_menu_action.unique_name = 'Playlist / Genre'
+
+                if last_list_name in list_names:
+                    create_menu_action_unique(self, smart_menu, _('Add to last playlist: %s') % last_list_name,
+                                              image='plus.png', unique_name='Add to last playlist',
+                                              shortcut=False,
+                                              triggered=partial(self._add_selected_to_last_playlist, last_list_name))
+
+                if selected_lists:
+                    on_lists_menu = smart_menu.addMenu(get_icon('search.png'), _('Already on playlists'))
+                    on_lists_menu_action = on_lists_menu.menuAction()
+                    on_lists_menu_action.favourites_menu_unique_name = _('Already on playlists')
+                    on_lists_menu_action.unique_name = 'Already on playlists'
+                    for list_name in selected_lists:
+                        create_menu_action_unique(self, on_lists_menu, _('View %s') % list_name,
+                                                  image='search.png', unique_name='View current playlist: %s' % list_name,
+                                                  shortcut=False, triggered=partial(self.view_list, list_name))
+                        create_menu_action_unique(self, on_lists_menu, _('Remove from %s') % list_name,
+                                                  image='minus.png', unique_name='Remove current playlist: %s' % list_name,
+                                                  shortcut=False, triggered=partial(self._remove_selected_from_list, list_name))
+                else:
+                    empty_action = smart_menu.addAction(_('Not on any manual playlist'))
+                    empty_action.setEnabled(False)
+
+                smart_menu.addSeparator()
+                create_menu_action_unique(self, smart_menu, _('Add selected books to Genre') + '...',
+                                          image='plus.png', unique_name='Add selected books to Genre',
+                                          shortcut=False, triggered=self._add_selected_to_genre)
+                create_menu_action_unique(self, smart_menu, _('Create/update playlists from selected Genres'),
+                                          image='images/reading_list.png',
+                                          unique_name='Create playlists from selected Genres',
+                                          shortcut=False, triggered=self._create_genre_playlists_for_selected_books)
 
             m.addSeparator()
             self.move_to_list_action = create_menu_action_unique(self, m, _('Move to list')+'...',
@@ -397,6 +440,149 @@ class ReadingListAction(InterfaceAction):
             
     def about_to_show_menu(self):
         self.rebuild_menus()
+
+    def _selected_book_ids(self):
+        try:
+            rows = self.gui.library_view.selectionModel().selectedRows()
+            if not rows or len(rows) == 0:
+                return []
+            return list(self.gui.library_view.get_selected_ids())
+        except Exception:
+            return []
+
+    def _lists_for_book_ids(self, db, book_ids, include_auto=False):
+        if not book_ids:
+            return []
+        selected_ids = set(book_ids)
+        list_names = cfg.get_list_names(db, exclude_auto=not include_auto)
+        found = []
+        for list_name in list_names:
+            if selected_ids.intersection(set(cfg.get_book_list(db, list_name))):
+                found.append(list_name)
+        return sorted(found)
+
+    def _remember_last_playlist(self, list_name):
+        if not list_name:
+            return
+        options = dict(cfg.plugin_prefs[cfg.STORE_OPTIONS])
+        options[cfg.KEY_LAST_PLAYLIST] = list_name
+        cfg.plugin_prefs[cfg.STORE_OPTIONS] = options
+
+    def _add_selected_to_last_playlist(self, list_name, *args):
+        selected_ids = self._selected_book_ids()
+        if selected_ids:
+            self.add_books_to_list(list_name, selected_ids, refresh_screen=True)
+
+    def _genre_column_label(self):
+        key = self._genre_category_key()
+        if not key:
+            return None, None
+        if key == 'tags':
+            return key, key
+        try:
+            return key, self.gui.current_db.field_metadata.key_to_label(key)
+        except Exception:
+            return key, key.lstrip('#')
+
+    def _genre_values_for_book_ids(self, book_ids):
+        db = self.gui.current_db
+        genre_key, genre_label = self._genre_column_label()
+        if not genre_key or not genre_label:
+            return []
+        values = set()
+        for book_id in book_ids:
+            try:
+                if genre_key == 'tags':
+                    raw_values = db.get_metadata(book_id, index_is_id=True, get_cover=False).tags or []
+                else:
+                    raw_values = db.get_custom(book_id, label=genre_label, index_is_id=True)
+                if not raw_values:
+                    continue
+                if isinstance(raw_values, (list, tuple, set)):
+                    values.update([unicode(v).strip() for v in raw_values if unicode(v).strip()])
+                else:
+                    text = unicode(raw_values).strip()
+                    if text:
+                        values.add(text)
+            except Exception as e:
+                if DEBUG:
+                    prints('Reading List Playlist: unable to read Genre for book {}: {}'.format(book_id, e))
+        return sorted(values, key=lambda x: x.lower())
+
+    def _add_selected_to_genre(self, *args):
+        selected_ids = self._selected_book_ids()
+        if not selected_ids:
+            return
+        genre_key, genre_label = self._genre_column_label()
+        if not genre_key:
+            return info_dialog(self.gui, _('Genre category not found'),
+                               _('No Tag Browser category named Genre was found in this library.'),
+                               show=True)
+
+        genre_name, ok = QInputDialog.getText(self.gui, _('Add to Genre'),
+                                              _('Genre to add to selected books:'))
+        genre_name = unicode(genre_name).strip()
+        if not ok or not genre_name:
+            return
+
+        db = self.gui.current_db
+        previous = self.gui.library_view.currentIndex()
+        if genre_key == 'tags':
+            db.bulk_modify_tags(selected_ids, add=[genre_name])
+        else:
+            metadata = db.field_metadata[genre_key]
+            if metadata.get('is_multiple', False):
+                db.set_custom_bulk_multiple(selected_ids, add=[genre_name], label=genre_label)
+            else:
+                for book_id in selected_ids:
+                    db.set_custom(book_id, genre_name, label=genre_label, commit=False)
+                db.commit()
+        self._keep_genre_view_flat(show_dialog=False)
+        self.gui.library_view.model().refresh_ids(set(selected_ids))
+        current = self.gui.library_view.currentIndex()
+        self.gui.library_view.model().current_changed(current, previous)
+        self.gui.tags_view.recount()
+        self.gui.status_bar.showMessage(_('Added %d books to Genre: %s') % (len(selected_ids), genre_name), 3000)
+
+    def _create_genre_playlists_for_selected_books(self, *args):
+        selected_ids = self._selected_book_ids()
+        if not selected_ids:
+            return
+        genre_key, _genre_label = self._genre_column_label()
+        if not genre_key:
+            return info_dialog(self.gui, _('Genre category not found'),
+                               _('No Tag Browser category named Genre was found in this library.'),
+                               show=True)
+        genres = self._genre_values_for_book_ids(selected_ids)
+        if not genres:
+            return info_dialog(self.gui, _('No Genres found'),
+                               _('The selected books do not have Genre values to turn into playlists.'),
+                               show=True)
+
+        db = self.gui.current_db
+        library_config = cfg.get_library_config(db)
+        lists = library_config[cfg.KEY_LISTS]
+        created = 0
+        updated = 0
+        for genre in genres:
+            list_name = _('Genre - %s') % genre
+            if list_name not in lists:
+                lists[list_name] = copy.deepcopy(cfg.DEFAULT_LIST_VALUES)
+                created += 1
+            else:
+                updated += 1
+            query_value = genre.replace('\\', '\\\\').replace('"', '\\"')
+            lists[list_name][cfg.KEY_POPULATE_TYPE] = 'POPSEARCH'
+            lists[list_name][cfg.KEY_POPULATE_SEARCH] = '%s:"=%s"' % (genre_key, query_value)
+            lists[list_name][cfg.KEY_SORT_LIST] = False
+        cfg.set_library_config(db, library_config)
+        for genre in genres:
+            self._rebuild_auto_search_list(db, _('Genre - %s') % genre)
+        self.rebuild_menus()
+        info_dialog(self.gui, _('Genre playlists ready'),
+                    _('Created %d and updated %d Genre playlists. Configure their sync targets in Customize plugin > Lists.') %
+                    (created, updated),
+                    show=True)
 
     def _genre_category_key(self):
         try:
@@ -664,6 +850,7 @@ class ReadingListAction(InterfaceAction):
                                 'reading_list_already_on_list', self.gui,
                                 title=_('Failed to add to list'))
                 return False
+            self._remember_last_playlist(list_name)
             cfg.set_book_list(db, list_name, book_ids)
 
             # Add tags to the books if necessary
