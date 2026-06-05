@@ -1,5 +1,10 @@
 # Reading List Change Log
 
+## [1.15.10-playlist] - 2026-06-05
+### Added
+- Automatically register Reading List Playlist in Calibre's book-list right-click
+  context menu and split context menu layouts.
+
 ## [1.15.9-playlist] - 2026-06-05
 ### Added
 - Added a `Playlist / Genre` menu for selected books.

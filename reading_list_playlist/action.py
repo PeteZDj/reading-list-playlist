@@ -80,6 +80,7 @@ class ReadingListAction(InterfaceAction):
         self.view_list_name = None
 
         self.set_popup_mode()
+        self._ensure_book_context_menu_registration()
         self._keep_genre_view_flat(show_dialog=False)
         self.rebuild_menus()
         # Subscribe to device connection events
@@ -440,6 +441,30 @@ class ReadingListAction(InterfaceAction):
             
     def about_to_show_menu(self):
         self.rebuild_menus()
+
+    def _ensure_book_context_menu_registration(self):
+        try:
+            from calibre.gui2 import gprefs
+            for layout_key in ('action-layout-context-menu', 'action-layout-context-menu-split'):
+                layout = list(gprefs.get(layout_key, []) or [])
+                if self.name in layout:
+                    continue
+                insert_at = len(layout)
+                for existing in ('Remove Books', 'Search The Internet'):
+                    if existing in layout:
+                        insert_at = layout.index(existing)
+                        break
+                new_layout = layout[:insert_at]
+                if new_layout and new_layout[-1] is not None:
+                    new_layout.append(None)
+                new_layout.append(self.name)
+                if insert_at < len(layout) and self.name != layout[insert_at]:
+                    new_layout.append(None)
+                new_layout.extend(layout[insert_at:])
+                gprefs[layout_key] = new_layout
+        except Exception as e:
+            if DEBUG:
+                prints('Reading List Playlist: unable to register context menu action: {}'.format(e))
 
     def _selected_book_ids(self):
         try:
