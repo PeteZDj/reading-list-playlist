@@ -11,7 +11,7 @@ Reading List Playlist is currently based on Grant Drake's Reading List plugin:
 
 Local derivative version:
 
-- Reading List Playlist: `1.15.11`
+- Reading List Playlist: `1.15.12`
 
 Derivative-only additions:
 

@@ -1,5 +1,10 @@
 # Reading List Change Log
 
+## [1.15.12-playlist] - 2026-06-05
+### Fixed
+- Include the shared `common_*.py` plugin modules in the derivative package so
+  the GUI action loads correctly.
+
 ## [1.15.11-playlist] - 2026-06-05
 ### Added
 - Also register Reading List Playlist in the cover browser right-click context
