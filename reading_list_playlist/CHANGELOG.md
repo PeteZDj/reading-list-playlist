@@ -1,5 +1,10 @@
 # Reading List Change Log
 
+## [1.15.11-playlist] - 2026-06-05
+### Added
+- Also register Reading List Playlist in the cover browser right-click context
+  menu, which is used by Calibre's cover grid view.
+
 ## [1.15.10-playlist] - 2026-06-05
 ### Added
 - Automatically register Reading List Playlist in Calibre's book-list right-click

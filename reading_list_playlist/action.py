@@ -445,7 +445,8 @@ class ReadingListAction(InterfaceAction):
     def _ensure_book_context_menu_registration(self):
         try:
             from calibre.gui2 import gprefs
-            for layout_key in ('action-layout-context-menu', 'action-layout-context-menu-split'):
+            for layout_key in ('action-layout-context-menu', 'action-layout-context-menu-split',
+                               'action-layout-context-menu-cover-browser'):
                 layout = list(gprefs.get(layout_key, []) or [])
                 if self.name in layout:
                     continue

@@ -20,7 +20,7 @@ class ActionReadingList(InterfaceActionBase):
     description             = 'Define playlist-style reading lists and keep Genre flat in the Tag Browser'
     supported_platforms     = ['windows', 'osx', 'linux']
     author                  = 'Grant Drake; derivative by Pete Njagi (PeteZDj)'
-    version                 = (1, 15, 10)
+    version                 = (1, 15, 11)
     minimum_calibre_version = (2, 0, 0)
 
     #: This field defines the GUI plugin class that contains all the code
