@@ -1,5 +1,13 @@
 # Reading List Change Log
 
+## [1.19.0-playlist] - 2026-06-06
+### Added
+- Extract embedded covers from existing book formats before searching online.
+- Add Internet Archive as a cover fallback and report each provider's result.
+- Add a cancellable local-drive/folder search for missing ebook files.
+- Rank filename matches, let the user choose the correct candidate, and attach
+  it to the existing Calibre record.
+
 ## [1.18.0-playlist] - 2026-06-06
 ### Added
 - Add `Find & download missing covers...` to the plugin menu.

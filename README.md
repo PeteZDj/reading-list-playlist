@@ -28,8 +28,11 @@ flat list view.
   default queue for books intended for an SD card or connected folder.
 - Use `No cover books` to see every library book missing a Calibre cover.
 - Select books in that view and choose `Find & download missing covers...` to
-  search Google Books or Open Library and save suitable results as
-  Calibre-managed covers.
+  extract embedded covers or search Google Books, Open Library, and Internet
+  Archive, then save suitable results as Calibre-managed covers.
+- Choose `Find missing book files on this computer...` to search a folder,
+  drive, or all local drives and attach a matching ebook file to the selected
+  Calibre record.
 
 ## Genre Flat-View Fix
 

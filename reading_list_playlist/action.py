@@ -3,8 +3,9 @@ from __future__ import unicode_literals, division, absolute_import, print_functi
 __license__ = 'GPL v3'
 __copyright__ = '2011, Grant Drake; 2026, Pete Njagi'
 
-import copy, json, os, threading, re
+import copy, ctypes, json, os, threading, re
 from collections import OrderedDict
+from difflib import SequenceMatcher
 from functools import partial
 from urllib.parse import urlencode
 
@@ -12,10 +13,10 @@ import six
 from six import text_type as unicode
 
 try:
-    from qt.core import (QApplication, QImage, QInputDialog, QMenu,
+    from qt.core import (QApplication, QFileDialog, QImage, QInputDialog, QMenu,
                          QProgressDialog, Qt, QToolButton, pyqtSignal)
 except ImportError:
-    from PyQt5.Qt import (QApplication, QImage, QInputDialog, QMenu,
+    from PyQt5.Qt import (QApplication, QFileDialog, QImage, QInputDialog, QMenu,
                          QProgressDialog, Qt, QToolButton, pyqtSignal)
 
 try:
@@ -25,6 +26,8 @@ except NameError:
 
 from calibre import browser, prints
 from calibre.constants import DEBUG, config_dir
+from calibre.ebooks import BOOK_EXTENSIONS
+from calibre.ebooks.metadata.meta import get_metadata
 from calibre.ebooks.metadata import authors_to_string
 from calibre.gui2 import error_dialog, question_dialog, info_dialog
 from calibre.gui2.actions import InterfaceAction
@@ -434,9 +437,15 @@ class ReadingListAction(InterfaceAction):
             create_menu_action_unique(
                 self, m, _('Find && download missing covers') + '...',
                 'images/no_cover_category.png',
-                tooltip=_('Search Google Books and Open Library for covers for the selected books'),
+                tooltip=_('Extract or download covers for the selected books'),
                 unique_name='Find and download missing covers',
                 shortcut=False, triggered=self._find_missing_covers_for_selected_books)
+            create_menu_action_unique(
+                self, m, _('Find missing book files on this computer') + '...',
+                'search.png',
+                tooltip=_('Search local drives or a folder and attach matching ebook files'),
+                unique_name='Find missing book files on this computer',
+                shortcut=False, triggered=self._find_missing_book_files)
             create_menu_action_unique(self, m, _('&Customize plugin') + '...', 'config.png',
                                       unique_name='&Customize plugin',
                                       shortcut=False, triggered=self.show_configuration)
@@ -604,7 +613,7 @@ class ReadingListAction(InterfaceAction):
                 show=True)
         if not question_dialog(
                 self.gui, _('Download missing covers?'),
-                _('Search Google Books and Open Library, then use the first suitable cover found for %d selected book(s)?') %
+                _('Extract embedded covers first, then search online for %d selected book(s)?') %
                 len(missing_ids),
                 show_copy_button=False):
             return
@@ -618,6 +627,7 @@ class ReadingListAction(InterfaceAction):
         downloaded = []
         not_found = []
         failed = []
+        diagnostics = []
         for index, book_id in enumerate(missing_ids):
             if progress.wasCanceled():
                 break
@@ -629,10 +639,16 @@ class ReadingListAction(InterfaceAction):
             progress.setValue(index)
             QApplication.processEvents()
             try:
-                cover_data = self._online_book_cover(
-                    title, authors, getattr(metadata, 'identifiers', {}) or {})
+                cover_data = self._embedded_book_cover(db, book_id)
+                source = _('existing book file')
+                attempts = []
+                if not cover_data:
+                    cover_data, source, attempts = self._online_book_cover(
+                        title, authors, getattr(metadata, 'identifiers', {}) or {})
                 if not cover_data:
                     not_found.append(label)
+                    diagnostics.append('{}:\n  {}'.format(
+                        label, '\n  '.join(attempts) if attempts else _('No source returned an image.')))
                     continue
                 db.set_cover(book_id, cover_data, notify=True, commit=True)
                 try:
@@ -641,6 +657,7 @@ class ReadingListAction(InterfaceAction):
                 except Exception:
                     pass
                 downloaded.append(book_id)
+                diagnostics.append('{}: {}'.format(label, _('cover from %s') % source))
             except Exception as e:
                 failed.append((label, unicode(e)))
                 if DEBUG:
@@ -656,6 +673,8 @@ class ReadingListAction(InterfaceAction):
         if failed:
             details.append(_('Download errors:') + '\n' + '\n'.join(
                 '{}: {}'.format(title, error) for title, error in failed[:50]))
+        if diagnostics:
+            details.append(_('Source details:') + '\n' + '\n\n'.join(diagnostics[:50]))
         message = _('Downloaded %d cover(s).') % len(downloaded)
         if progress.wasCanceled():
             message += ' ' + _('The operation was canceled.')
@@ -665,15 +684,56 @@ class ReadingListAction(InterfaceAction):
             self.gui, _('Cover download complete'), message,
             det_msg='\n\n'.join(details), show=True)
 
+    def _embedded_book_cover(self, db, book_id):
+        new_api = db.new_api
+        for fmt in new_api.formats(book_id, verify_formats=True) or ():
+            path = new_api.format_abspath(book_id, fmt)
+            if not path or not os.path.isfile(path):
+                continue
+            try:
+                with open(path, 'rb') as stream:
+                    metadata = get_metadata(stream, fmt.lower())
+                cover_data = getattr(metadata, 'cover_data', None)
+                if cover_data and len(cover_data) > 1 and cover_data[1]:
+                    image = QImage.fromData(cover_data[1])
+                    if not image.isNull() and image.width() >= 120 and image.height() >= 160:
+                        return cover_data[1]
+            except Exception as e:
+                if DEBUG:
+                    prints('Reading List Playlist: unable to extract cover from {}: {}'.format(path, e))
+        return None
+
     def _online_book_cover(self, title, authors, identifiers):
+        attempts = []
         try:
             cover = self._google_books_cover(title, authors)
             if cover:
-                return cover
+                return cover, 'Google Books', attempts
         except Exception as e:
+            attempts.append('Google Books: {}'.format(self._short_error(e)))
             if DEBUG:
                 prints('Reading List Playlist: Google Books cover search failed: {}'.format(e))
-        return self._open_library_cover(title, authors, identifiers)
+        try:
+            cover = self._open_library_cover(title, authors, identifiers)
+            if cover:
+                return cover, 'Open Library', attempts
+            attempts.append(_('Open Library: no matching cover'))
+        except Exception as e:
+            attempts.append('Open Library: {}'.format(self._short_error(e)))
+        try:
+            cover = self._internet_archive_cover(title, authors)
+            if cover:
+                return cover, 'Internet Archive', attempts
+            attempts.append(_('Internet Archive: no matching cover'))
+        except Exception as e:
+            attempts.append('Internet Archive: {}'.format(self._short_error(e)))
+        return None, None, attempts
+
+    def _short_error(self, error):
+        text = re.sub(r'\s+', ' ', unicode(error)).strip()
+        if '429' in text:
+            return _('daily search quota exceeded')
+        return text[:240] or error.__class__.__name__
 
     def _google_books_cover(self, title, authors):
         if not title:
@@ -687,7 +747,7 @@ class ReadingListAction(InterfaceAction):
             'printType': 'books',
         })
         br = browser()
-        br.addheaders = [('User-Agent', 'Reading List Playlist/1.18')]
+        br.addheaders = [('User-Agent', 'Reading List Playlist/1.19')]
         response = br.open_novisit(
             'https://www.googleapis.com/books/v1/volumes?' + params, timeout=20)
         payload = json.loads(response.read().decode('utf-8'))
@@ -705,7 +765,7 @@ class ReadingListAction(InterfaceAction):
 
     def _open_library_cover(self, title, authors, identifiers):
         br = browser()
-        br.addheaders = [('User-Agent', 'Reading List Playlist/1.18 (peteng24@gmail.com)')]
+        br.addheaders = [('User-Agent', 'Reading List Playlist/1.19 (peteng24@gmail.com)')]
         isbn = re.sub(r'[^0-9Xx]', '', unicode(identifiers.get('isbn', '') or ''))
         if isbn:
             data = self._download_valid_cover(
@@ -734,6 +794,31 @@ class ReadingListAction(InterfaceAction):
                     return data
         return None
 
+    def _internet_archive_cover(self, title, authors):
+        if not title:
+            return None
+        query = 'title:("{}")'.format(title.replace('"', ' '))
+        if authors:
+            query += ' AND creator:("{}")'.format(authors[0].replace('"', ' '))
+        params = urlencode([
+            ('q', query), ('fl[]', 'identifier'), ('fl[]', 'title'),
+            ('rows', 10), ('page', 1), ('output', 'json'),
+        ])
+        br = browser()
+        br.addheaders = [('User-Agent', 'Reading List Playlist/1.19 (peteng24@gmail.com)')]
+        response = br.open_novisit(
+            'https://archive.org/advancedsearch.php?' + params, timeout=20)
+        payload = json.loads(response.read().decode('utf-8'))
+        for doc in payload.get('response', {}).get('docs', []):
+            identifier = doc.get('identifier')
+            if not identifier:
+                continue
+            data = self._download_valid_cover(
+                br, 'https://archive.org/download/{}/page/n0_w600.jpg'.format(identifier))
+            if data:
+                return data
+        return None
+
     def _download_valid_cover(self, br, url):
         try:
             image_response = br.open_novisit(url, timeout=30)
@@ -746,6 +831,167 @@ class ReadingListAction(InterfaceAction):
         if image.isNull() or image.width() < 120 or image.height() < 160:
             return None
         return data
+
+    def _find_missing_book_files(self, *args):
+        selected_ids = self._selected_book_ids()
+        if not selected_ids:
+            return info_dialog(
+                self.gui, _('No books selected'),
+                _('Select one or more library books to search for.'), show=True)
+        roots = self._choose_local_search_roots()
+        if not roots:
+            return
+
+        db = self.gui.current_db
+        targets = {}
+        for book_id in selected_ids:
+            metadata = db.get_metadata(book_id, index_is_id=True, get_cover=False)
+            title = unicode(metadata.title or '').strip()
+            normalized = self._normalized_file_title(title)
+            if normalized:
+                targets[book_id] = (title, normalized)
+        if not targets:
+            return info_dialog(
+                self.gui, _('No searchable titles'),
+                _('The selected books do not have usable titles.'), show=True)
+
+        progress = QProgressDialog(
+            _('Searching local files...'), _('Cancel'), 0, 0, self.gui)
+        progress.setWindowTitle(_('Find missing book files'))
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        candidates = {book_id: [] for book_id in targets}
+        extensions = {'.' + ext.lower() for ext in BOOK_EXTENSIONS}
+        library_path = os.path.normcase(os.path.abspath(unicode(db.library_path)))
+        skip_names = {
+            '$recycle.bin', 'system volume information', 'windows',
+            'program files', 'program files (x86)', 'programdata',
+            'appdata', '.git', 'node_modules',
+        }
+
+        for root in roots:
+            for folder, dir_names, file_names in os.walk(root, topdown=True, onerror=lambda e: None):
+                if progress.wasCanceled():
+                    break
+                absolute_folder = os.path.normcase(os.path.abspath(folder))
+                if absolute_folder == library_path or absolute_folder.startswith(library_path + os.sep):
+                    dir_names[:] = []
+                    continue
+                dir_names[:] = [
+                    name for name in dir_names
+                    if name.lower() not in skip_names and not name.startswith('.')
+                ]
+                progress.setLabelText(_('Searching: %s') % folder)
+                QApplication.processEvents()
+                for file_name in file_names:
+                    extension = os.path.splitext(file_name)[1].lower()
+                    if extension not in extensions:
+                        continue
+                    normalized_file = self._normalized_file_title(os.path.splitext(file_name)[0])
+                    if not normalized_file:
+                        continue
+                    for book_id, (title, normalized_title) in targets.items():
+                        score = self._file_title_score(normalized_title, normalized_file)
+                        if score >= 0.50:
+                            candidates[book_id].append(
+                                (score, os.path.join(folder, file_name), extension[1:].upper()))
+            if progress.wasCanceled():
+                break
+        progress.close()
+
+        attached = []
+        skipped = []
+        for book_id, (title, normalized_title) in targets.items():
+            matches = sorted(candidates[book_id], key=lambda item: (-item[0], len(item[1])))[:20]
+            if not matches:
+                skipped.append('{}: {}'.format(title, _('no local match')))
+                continue
+            labels = [
+                '{}%  [{}]\n{}'.format(int(score * 100), fmt, path)
+                for score, path, fmt in matches
+            ]
+            choice, accepted = QInputDialog.getItem(
+                self.gui, _('Choose book file'),
+                _('Best local matches for "%s":') % title, labels, 0, False)
+            if not accepted:
+                skipped.append('{}: {}'.format(title, _('skipped')))
+                continue
+            match_index = labels.index(unicode(choice))
+            score, path, fmt = matches[match_index]
+            try:
+                db.new_api.add_format(book_id, fmt, path, replace=True, run_hooks=True)
+                if not db.cover(book_id, index_is_id=True, as_path=True):
+                    cover_data = self._embedded_book_cover(db, book_id)
+                    if cover_data:
+                        db.set_cover(book_id, cover_data, notify=True, commit=True)
+                        try:
+                            db.set_custom_bulk_multiple(
+                                [book_id], remove=['No cover books'], label='nocover', notify=False)
+                        except Exception:
+                            pass
+                attached.append((book_id, title, path))
+            except Exception as e:
+                skipped.append('{}: {}'.format(title, self._short_error(e)))
+
+        if attached:
+            self.gui.library_view.model().refresh_ids({book_id for book_id, title, path in attached})
+        details = [
+            '{}\n  {}'.format(title, path) for book_id, title, path in attached
+        ] + skipped
+        info_dialog(
+            self.gui, _('Local book search complete'),
+            _('Attached %d matching book file(s).') % len(attached),
+            det_msg='\n'.join(details[:100]), show=True)
+
+    def _choose_local_search_roots(self):
+        drives = self._local_drive_roots()
+        options = [_('Choose a folder...')]
+        if len(drives) > 1:
+            options.append(_('All local drives'))
+        options.extend(drives)
+        choice, accepted = QInputDialog.getItem(
+            self.gui, _('Search location'),
+            _('Where should Reading List Playlist search?'), options, 0, False)
+        if not accepted:
+            return []
+        choice = unicode(choice)
+        if choice == _('Choose a folder...'):
+            folder = QFileDialog.getExistingDirectory(
+                self.gui, _('Choose folder to search'), os.path.expanduser('~'))
+            return [unicode(folder)] if folder else []
+        if choice == _('All local drives'):
+            return drives
+        return [choice]
+
+    def _local_drive_roots(self):
+        roots = []
+        try:
+            mask = ctypes.windll.kernel32.GetLogicalDrives()
+            get_drive_type = ctypes.windll.kernel32.GetDriveTypeW
+            for index in range(26):
+                if not (mask & (1 << index)):
+                    continue
+                root = '{}:\\'.format(chr(ord('A') + index))
+                if get_drive_type(root) in (2, 3):
+                    roots.append(root)
+        except Exception:
+            pass
+        return roots or [os.path.expanduser('~')]
+
+    def _normalized_file_title(self, text):
+        text = unicode(text or '').lower()
+        text = re.sub(r'\[[^\]]*\]|\([^\)]*(?:digital|scan|retail|ebook)[^\)]*\)', ' ', text)
+        return ' '.join(re.findall(r'[a-z0-9]+', text))
+
+    def _file_title_score(self, title, file_name):
+        title_tokens = set(title.split())
+        file_tokens = set(file_name.split())
+        if not title_tokens or not file_tokens:
+            return 0
+        overlap = len(title_tokens & file_tokens) / float(len(title_tokens))
+        sequence = SequenceMatcher(None, title, file_name).ratio()
+        contains = 1.0 if title in file_name or file_name in title else 0.0
+        return max(contains, (overlap * 0.65) + (sequence * 0.35))
 
     def _ensure_book_context_menu_registration(self):
         try:

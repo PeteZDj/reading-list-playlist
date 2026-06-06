@@ -11,7 +11,7 @@ Reading List Playlist is currently based on Grant Drake's Reading List plugin:
 
 Local derivative version:
 
-- Reading List Playlist: `1.18.0`
+- Reading List Playlist: `1.19.0`
 
 Derivative-only additions:
 
@@ -26,5 +26,7 @@ Derivative-only additions:
 - Dedicated sidebar icons and an automatically maintained `No cover books`
   category based on Calibre's `cover:false` query.
 - Selected-book missing-cover downloader backed by Google Books with an Open
-  Library fallback.
+  Library and Internet Archive fallback, plus embedded-cover extraction.
+- Local drive/folder recovery for attaching missing ebook files to existing
+  Calibre records.
 - Repo documentation, packaging script, screenshot, notice, and roadmap.
