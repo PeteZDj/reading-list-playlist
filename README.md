@@ -27,6 +27,9 @@ flat list view.
 - Use the dedicated `Readlist` sidebar category, placed above Genre, as the
   default queue for books intended for an SD card or connected folder.
 - Use `No cover books` to see every library book missing a Calibre cover.
+- Select books in that view and choose `Find & download missing covers...` to
+  search Google Books or Open Library and save suitable results as
+  Calibre-managed covers.
 
 ## Genre Flat-View Fix
 

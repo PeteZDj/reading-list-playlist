@@ -1,5 +1,14 @@
 # Reading List Change Log
 
+## [1.18.0-playlist] - 2026-06-06
+### Added
+- Add `Find & download missing covers...` to the plugin menu.
+- Search Google Books first, then fall back to Open Library title/author and ISBN
+  cover APIs.
+- Validate downloaded images before saving them as Calibre-managed covers.
+- Remove successfully updated books from the No cover books category.
+- Show cancellable progress and a completion/error summary.
+
 ## [1.17.0-playlist] - 2026-06-06
 ### Added
 - Give Readlist a dedicated reader-style Tag Browser icon.

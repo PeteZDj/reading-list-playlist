@@ -3,24 +3,27 @@ from __future__ import unicode_literals, division, absolute_import, print_functi
 __license__ = 'GPL v3'
 __copyright__ = '2011, Grant Drake; 2026, Pete Njagi'
 
-import copy, os, threading, re
+import copy, json, os, threading, re
 from collections import OrderedDict
 from functools import partial
+from urllib.parse import urlencode
 
 import six
 from six import text_type as unicode
 
 try:
-    from qt.core import QInputDialog, QMenu, QToolButton, pyqtSignal
+    from qt.core import (QApplication, QImage, QInputDialog, QMenu,
+                         QProgressDialog, Qt, QToolButton, pyqtSignal)
 except ImportError:
-    from PyQt5.Qt import QInputDialog, QMenu, QToolButton, pyqtSignal
+    from PyQt5.Qt import (QApplication, QImage, QInputDialog, QMenu,
+                         QProgressDialog, Qt, QToolButton, pyqtSignal)
 
 try:
     load_translations()
 except NameError:
     pass # load_translations() added in calibre 1.9
 
-from calibre import prints
+from calibre import browser, prints
 from calibre.constants import DEBUG, config_dir
 from calibre.ebooks.metadata import authors_to_string
 from calibre.gui2 import error_dialog, question_dialog, info_dialog
@@ -428,6 +431,12 @@ class ReadingListAction(InterfaceAction):
                                       tooltip=_('Prevent the Genre category from switching to the partitioned Tag Browser view'),
                                       unique_name='Keep Genre view flat',
                                       shortcut=False, triggered=self._keep_genre_view_flat_from_menu)
+            create_menu_action_unique(
+                self, m, _('Find && download missing covers') + '...',
+                'images/no_cover_category.png',
+                tooltip=_('Search Google Books and Open Library for covers for the selected books'),
+                unique_name='Find and download missing covers',
+                shortcut=False, triggered=self._find_missing_covers_for_selected_books)
             create_menu_action_unique(self, m, _('&Customize plugin') + '...', 'config.png',
                                       unique_name='&Customize plugin',
                                       shortcut=False, triggered=self.show_configuration)
@@ -580,6 +589,163 @@ class ReadingListAction(InterfaceAction):
         except Exception as e:
             if DEBUG:
                 prints('Reading List Playlist: unable to set sidebar category icons: {}'.format(e))
+
+    def _find_missing_covers_for_selected_books(self, *args):
+        db = self.gui.current_db
+        selected_ids = self._selected_book_ids()
+        missing_ids = [
+            book_id for book_id in selected_ids
+            if not db.cover(book_id, index_is_id=True, as_path=True)
+        ]
+        if not missing_ids:
+            return info_dialog(
+                self.gui, _('No missing covers selected'),
+                _('Select one or more books without covers, then run this command again.'),
+                show=True)
+        if not question_dialog(
+                self.gui, _('Download missing covers?'),
+                _('Search Google Books and Open Library, then use the first suitable cover found for %d selected book(s)?') %
+                len(missing_ids),
+                show_copy_button=False):
+            return
+
+        progress = QProgressDialog(
+            _('Searching for covers...'), _('Cancel'), 0, len(missing_ids), self.gui)
+        progress.setWindowTitle(_('Find missing covers'))
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+
+        downloaded = []
+        not_found = []
+        failed = []
+        for index, book_id in enumerate(missing_ids):
+            if progress.wasCanceled():
+                break
+            metadata = db.get_metadata(book_id, index_is_id=True, get_cover=False)
+            title = unicode(metadata.title or '').strip()
+            authors = [unicode(a).strip() for a in (metadata.authors or []) if unicode(a).strip()]
+            label = title or _('Book %d') % book_id
+            progress.setLabelText(_('Searching: %s') % label)
+            progress.setValue(index)
+            QApplication.processEvents()
+            try:
+                cover_data = self._online_book_cover(
+                    title, authors, getattr(metadata, 'identifiers', {}) or {})
+                if not cover_data:
+                    not_found.append(label)
+                    continue
+                db.set_cover(book_id, cover_data, notify=True, commit=True)
+                try:
+                    db.set_custom_bulk_multiple(
+                        [book_id], remove=['No cover books'], label='nocover', notify=False)
+                except Exception:
+                    pass
+                downloaded.append(book_id)
+            except Exception as e:
+                failed.append((label, unicode(e)))
+                if DEBUG:
+                    prints('Reading List Playlist: cover download failed for {}: {}'.format(label, e))
+
+        progress.setValue(len(missing_ids))
+        if downloaded:
+            self.gui.library_view.model().refresh_ids(set(downloaded))
+            self.gui.tags_view.recount()
+        details = []
+        if not_found:
+            details.append(_('No suitable image found:') + '\n' + '\n'.join(not_found[:50]))
+        if failed:
+            details.append(_('Download errors:') + '\n' + '\n'.join(
+                '{}: {}'.format(title, error) for title, error in failed[:50]))
+        message = _('Downloaded %d cover(s).') % len(downloaded)
+        if progress.wasCanceled():
+            message += ' ' + _('The operation was canceled.')
+        if not_found or failed:
+            message += ' ' + _('%d book(s) were not updated.') % (len(not_found) + len(failed))
+        info_dialog(
+            self.gui, _('Cover download complete'), message,
+            det_msg='\n\n'.join(details), show=True)
+
+    def _online_book_cover(self, title, authors, identifiers):
+        try:
+            cover = self._google_books_cover(title, authors)
+            if cover:
+                return cover
+        except Exception as e:
+            if DEBUG:
+                prints('Reading List Playlist: Google Books cover search failed: {}'.format(e))
+        return self._open_library_cover(title, authors, identifiers)
+
+    def _google_books_cover(self, title, authors):
+        if not title:
+            return None
+        query_parts = ['intitle:"{}"'.format(title)]
+        if authors:
+            query_parts.append('inauthor:"{}"'.format(authors[0]))
+        params = urlencode({
+            'q': ' '.join(query_parts),
+            'maxResults': 10,
+            'printType': 'books',
+        })
+        br = browser()
+        br.addheaders = [('User-Agent', 'Reading List Playlist/1.18')]
+        response = br.open_novisit(
+            'https://www.googleapis.com/books/v1/volumes?' + params, timeout=20)
+        payload = json.loads(response.read().decode('utf-8'))
+        for item in payload.get('items', []):
+            links = item.get('volumeInfo', {}).get('imageLinks', {})
+            for size in ('extraLarge', 'large', 'medium', 'small', 'thumbnail', 'smallThumbnail'):
+                url = links.get(size)
+                if not url:
+                    continue
+                url = url.replace('http://', 'https://')
+                data = self._download_valid_cover(br, url)
+                if data:
+                    return data
+        return None
+
+    def _open_library_cover(self, title, authors, identifiers):
+        br = browser()
+        br.addheaders = [('User-Agent', 'Reading List Playlist/1.18 (peteng24@gmail.com)')]
+        isbn = re.sub(r'[^0-9Xx]', '', unicode(identifiers.get('isbn', '') or ''))
+        if isbn:
+            data = self._download_valid_cover(
+                br, 'https://covers.openlibrary.org/b/isbn/{}-L.jpg?default=false'.format(isbn))
+            if data:
+                return data
+        if not title:
+            return None
+        params = {'title': title, 'limit': 10, 'fields': 'title,author_name,cover_i,isbn'}
+        if authors:
+            params['author'] = authors[0]
+        response = br.open_novisit(
+            'https://openlibrary.org/search.json?' + urlencode(params), timeout=20)
+        payload = json.loads(response.read().decode('utf-8'))
+        for doc in payload.get('docs', []):
+            cover_id = doc.get('cover_i')
+            if cover_id:
+                data = self._download_valid_cover(
+                    br, 'https://covers.openlibrary.org/b/id/{}-L.jpg?default=false'.format(cover_id))
+                if data:
+                    return data
+            for candidate_isbn in doc.get('isbn', [])[:5]:
+                data = self._download_valid_cover(
+                    br, 'https://covers.openlibrary.org/b/isbn/{}-L.jpg?default=false'.format(candidate_isbn))
+                if data:
+                    return data
+        return None
+
+    def _download_valid_cover(self, br, url):
+        try:
+            image_response = br.open_novisit(url, timeout=30)
+            data = image_response.read(15 * 1024 * 1024 + 1)
+        except Exception:
+            return None
+        if len(data) > 15 * 1024 * 1024:
+            return None
+        image = QImage.fromData(data)
+        if image.isNull() or image.width() < 120 or image.height() < 160:
+            return None
+        return data
 
     def _ensure_book_context_menu_registration(self):
         try:
