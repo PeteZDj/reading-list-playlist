@@ -1,5 +1,21 @@
 # Reading List Change Log
 
+## [1.17.0-playlist] - 2026-06-06
+### Added
+- Give Readlist a dedicated reader-style Tag Browser icon.
+- Add a `No cover books` sidebar category populated from Calibre's
+  `cover:false` search.
+- Give No cover books a dedicated missing-cover icon.
+- Keep sidebar order as Readlist, No cover books, then Genre.
+
+## [1.16.0-playlist] - 2026-06-06
+### Added
+- Add a dedicated `Readlist` custom category above Genre in the Tag Browser.
+- Make `Readlist` the default and quick-access playlist.
+- Mirror Readlist playlist membership into the `#readlist` custom column.
+- Configure Readlist for automatic sync to any configured device/folder without
+  clearing the playlist after sync.
+
 ## [1.15.12-playlist] - 2026-06-05
 ### Fixed
 - Include the shared `common_*.py` plugin modules in the derivative package so

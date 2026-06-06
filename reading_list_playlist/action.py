@@ -3,7 +3,7 @@ from __future__ import unicode_literals, division, absolute_import, print_functi
 __license__ = 'GPL v3'
 __copyright__ = '2011, Grant Drake; 2026, Pete Njagi'
 
-import copy, threading, re
+import copy, os, threading, re
 from collections import OrderedDict
 from functools import partial
 
@@ -21,7 +21,7 @@ except NameError:
     pass # load_translations() added in calibre 1.9
 
 from calibre import prints
-from calibre.constants import DEBUG
+from calibre.constants import DEBUG, config_dir
 from calibre.ebooks.metadata import authors_to_string
 from calibre.gui2 import error_dialog, question_dialog, info_dialog
 from calibre.gui2.actions import InterfaceAction
@@ -40,7 +40,8 @@ PLUGIN_ICONS = ['images/reading_list.png', 'images/device.png',
                 'images/arrow_down_double.png', 'images/arrow_down_double_bar.png',
                 'images/arrow_down_single.png', 'images/arrow_up_double.png',
                 'images/arrow_up_double_bar.png', 'images/arrow_up_single.png',
-                'images/plusminus.png']
+                'images/plusminus.png', 'images/readlist_category.png',
+                'images/no_cover_category.png']
 
 class ReadingListAction(InterfaceAction):
 
@@ -80,6 +81,9 @@ class ReadingListAction(InterfaceAction):
         self.view_list_name = None
 
         self.set_popup_mode()
+        self._ensure_readlist_integration()
+        self._ensure_no_cover_integration()
+        self._ensure_sidebar_category_icons()
         self._ensure_book_context_menu_registration()
         self._keep_genre_view_flat(show_dialog=False)
         self.rebuild_menus()
@@ -441,6 +445,141 @@ class ReadingListAction(InterfaceAction):
             
     def about_to_show_menu(self):
         self.rebuild_menus()
+
+    def _ensure_readlist_integration(self):
+        db = self.gui.current_db
+        readlist_key = '#readlist'
+        try:
+            if readlist_key not in db.field_metadata:
+                db.create_custom_column(
+                    'readlist', 'Readlist', 'text', True,
+                    display={'is_names': False,
+                             'description': 'Books selected for SD card or folder sync'})
+                info_dialog(
+                    self.gui, _('Readlist category created'),
+                    _('The Readlist sidebar category was created. Restart calibre once to finish enabling it.'),
+                    show=True)
+                return
+
+            library = cfg.get_library_config(db)
+            lists = library[cfg.KEY_LISTS]
+            old_default = library.get(cfg.KEY_DEFAULT_LIST, 'Default')
+            existing = lists.get('Readlist') or lists.get(old_default) or lists.get('Default')
+            if existing is None:
+                existing = copy.deepcopy(cfg.DEFAULT_LIST_VALUES)
+            readlist = copy.deepcopy(existing)
+            readlist.update({
+                cfg.KEY_DISPLAY_TOP_MENU: True,
+                cfg.KEY_MODIFY_ACTION: 'TAGADDREMOVE',
+                cfg.KEY_POPULATE_TYPE: 'POPMANUAL',
+                cfg.KEY_SYNC_AUTO: True,
+                cfg.KEY_SYNC_CLEAR: False,
+                cfg.KEY_SYNC_DEVICE: cfg.TOKEN_ANY_DEVICE,
+                cfg.KEY_LIST_TYPE: 'SYNCNEW',
+                cfg.KEY_TAGS_COLUMN: readlist_key,
+                cfg.KEY_TAGS_TEXT: 'Readlist',
+            })
+            lists['Readlist'] = readlist
+            if old_default != 'Readlist':
+                lists.pop(old_default, None)
+            if old_default != 'Default':
+                lists.pop('Default', None)
+            library[cfg.KEY_DEFAULT_LIST] = 'Readlist'
+            library[cfg.KEY_QUICK_ACCESS_LIST] = 'Readlist'
+            cfg.set_library_config(db, library)
+
+            content = set(cfg.get_book_list(db, 'Readlist'))
+            current = set(db.data.search_getting_ids(
+                '#readlist:"=Readlist"', search_restriction=''))
+            to_add = list(content - current)
+            to_remove = list(current - content)
+            if to_add:
+                db.set_custom_bulk_multiple(to_add, add=['Readlist'], label='readlist', notify=False)
+            if to_remove:
+                db.set_custom_bulk_multiple(to_remove, remove=['Readlist'], label='readlist', notify=False)
+
+            order = list(db.prefs.get('tag_browser_category_order', []) or [])
+            while readlist_key in order:
+                order.remove(readlist_key)
+            while '#nocover' in order:
+                order.remove('#nocover')
+            genre_index = order.index('#genre') if '#genre' in order else len(order)
+            order[genre_index:genre_index] = [readlist_key, '#nocover']
+            db.prefs.set('tag_browser_category_order', order)
+
+            dont_collapse = list(db.prefs.get('tag_browser_dont_collapse', []) or [])
+            for key in (readlist_key, '#nocover', '#genre'):
+                if key not in dont_collapse:
+                    dont_collapse.append(key)
+            db.prefs.set('tag_browser_dont_collapse', dont_collapse)
+        except Exception as e:
+            if DEBUG:
+                prints('Reading List Playlist: unable to initialize Readlist integration: {}'.format(e))
+
+    def _ensure_no_cover_integration(self):
+        db = self.gui.current_db
+        key = '#nocover'
+        try:
+            if key not in db.field_metadata:
+                db.create_custom_column(
+                    'nocover', 'No cover books', 'text', True,
+                    display={'is_names': False,
+                             'description': 'Books that do not have a Calibre cover'})
+                info_dialog(
+                    self.gui, _('No cover books category created'),
+                    _('The No cover books sidebar category was created. Restart calibre once to populate it.'),
+                    show=True)
+                return
+
+            no_cover_ids = set(db.search('cover:false', return_matches=True))
+            current_ids = set(db.search('#nocover:"=No cover books"', return_matches=True))
+            to_add = list(no_cover_ids - current_ids)
+            to_remove = list(current_ids - no_cover_ids)
+            if to_add:
+                db.set_custom_bulk_multiple(
+                    to_add, add=['No cover books'], label='nocover', notify=False)
+            if to_remove:
+                db.set_custom_bulk_multiple(
+                    to_remove, remove=['No cover books'], label='nocover', notify=False)
+
+            order = list(db.prefs.get('tag_browser_category_order', []) or [])
+            for category_key in ('#readlist', key):
+                while category_key in order:
+                    order.remove(category_key)
+            genre_index = order.index('#genre') if '#genre' in order else len(order)
+            order[genre_index:genre_index] = ['#readlist', key]
+            db.prefs.set('tag_browser_category_order', order)
+            self.gui.tags_view.recount()
+        except Exception as e:
+            if DEBUG:
+                prints('Reading List Playlist: unable to initialize No cover books: {}'.format(e))
+
+    def _ensure_sidebar_category_icons(self):
+        try:
+            icon_dir = os.path.join(config_dir, 'tb_icons')
+            if not os.path.isdir(icon_dir):
+                os.makedirs(icon_dir)
+            resources = self.load_resources([
+                'images/readlist_category.png', 'images/no_cover_category.png'])
+            icon_map = {
+                '#readlist': ('readlist-playlist.png', 'images/readlist_category.png'),
+                '#nocover': ('no-cover-books.png', 'images/no_cover_category.png'),
+            }
+            model = self.gui.tags_view.model()
+            for category_key, (file_name, resource_name) in icon_map.items():
+                path = os.path.join(icon_dir, file_name)
+                raw = resources[resource_name]
+                existing = None
+                if os.path.exists(path):
+                    with open(path, 'rb') as icon_file:
+                        existing = icon_file.read()
+                if existing != raw:
+                    with open(path, 'wb') as icon_file:
+                        icon_file.write(raw)
+                model.set_custom_category_icon(category_key, file_name)
+        except Exception as e:
+            if DEBUG:
+                prints('Reading List Playlist: unable to set sidebar category icons: {}'.format(e))
 
     def _ensure_book_context_menu_registration(self):
         try:

@@ -11,7 +11,7 @@ Reading List Playlist is currently based on Grant Drake's Reading List plugin:
 
 Local derivative version:
 
-- Reading List Playlist: `1.15.12`
+- Reading List Playlist: `1.17.0`
 
 Derivative-only additions:
 
@@ -21,4 +21,8 @@ Derivative-only additions:
 - Playlist / Genre menu for last-used playlist, selected-book playlist membership,
   Genre assignment, and Genre-to-playlist creation.
 - Automatic registration in Calibre's book-list right-click context menu.
+- Dedicated `Readlist` sidebar category and default playlist for SD card/folder
+  sync workflows.
+- Dedicated sidebar icons and an automatically maintained `No cover books`
+  category based on Calibre's `cover:false` query.
 - Repo documentation, packaging script, screenshot, notice, and roadmap.

@@ -24,6 +24,9 @@ flat list view.
 - Use the `Playlist / Genre` menu to add selected books to the last playlist,
   see which playlists they are already on, add a Genre, or turn selected Genre
   values into syncable Reading List playlists.
+- Use the dedicated `Readlist` sidebar category, placed above Genre, as the
+  default queue for books intended for an SD card or connected folder.
+- Use `No cover books` to see every library book missing a Calibre cover.
 
 ## Genre Flat-View Fix
 
